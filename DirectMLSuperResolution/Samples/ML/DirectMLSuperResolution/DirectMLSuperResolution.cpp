@@ -15,6 +15,15 @@
 #include "ReadData.h"
 #include "Float16Compressor.h"
 
+    #ifdef _WIN32
+    #include <winsock2.h>
+    #include <time.h>
+#else
+    #include <sys/time.h>
+#endif
+#include <iostream>
+#include <windows.h> 
+#include <sstream>
 // Use video frames as input to the DirectML model, instead of a static texture.
 #define USE_VIDEO 1
 
@@ -40,6 +49,35 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
+
+ 
+unsigned long long GetCurrentTimeMsec()
+{
+#ifdef _WIN32
+        struct timeval tv;
+        time_t clock;
+        struct tm tm;
+        SYSTEMTIME wtm;
+ 
+        GetLocalTime(&wtm);
+        tm.tm_year = wtm.wYear - 1900;
+        tm.tm_mon = wtm.wMonth - 1;
+        tm.tm_mday = wtm.wDay;
+        tm.tm_hour = wtm.wHour;
+        tm.tm_min = wtm.wMinute;
+        tm.tm_sec = wtm.wSecond;
+        tm.tm_isdst = -1;
+        clock = mktime(&tm);
+        tv.tv_sec = clock;
+        tv.tv_usec = wtm.wMilliseconds * 1000;
+        return ((unsigned long long)tv.tv_sec * 1000 + (unsigned long long)tv.tv_usec / 1000);
+#else
+        struct timeval tv;
+        gettimeofday(&tv,NULL);
+        return ((unsigned long long)tv.tv_sec * 1000 + (unsigned long long)tv.tv_usec / 1000);
+#endif
+    }
+
     struct Vertex
     {
         XMFLOAT4 position;
@@ -395,6 +433,8 @@ void Sample::Render()
     
     auto commandList = m_deviceResources->GetCommandList();
 
+    unsigned long long sys_1 = GetCurrentTimeMsec();
+
     // If requested, run the current frame texture through the DirectML model to upscale it.
     if (m_useDml)
     {
@@ -427,6 +467,9 @@ void Sample::Render()
         // Run the DirectML operations (model input -> model output)
         {
             PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"DML ops");
+
+            SYSTEMTIME sys_1;
+            GetLocalTime(&sys_1);
 
             ID3D12DescriptorHeap* pHeaps[] = { m_dmlDescriptorHeap->Heap() };
             commandList->SetDescriptorHeaps(_countof(pHeaps), pHeaps);
@@ -461,236 +504,241 @@ void Sample::Render()
     }
 
     // Render either the DML result or a bilinear upscale to a texture
-    {
-        PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render to texture");
+    // {
+    //     PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render to texture");
 
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(m_finalResultTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-            CD3DX12_RESOURCE_BARRIER::Transition(m_modelOutput.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr)    
-        };
+    //     D3D12_RESOURCE_BARRIER barriers[] = {
+    //         CD3DX12_RESOURCE_BARRIER::Transition(m_finalResultTexture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+    //         CD3DX12_RESOURCE_BARRIER::Transition(m_modelOutput.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+    //         CD3DX12_RESOURCE_BARRIER::UAV(nullptr)    
+    //     };
 
-        commandList->ResourceBarrier(m_useDml ? _countof(barriers) : 1, barriers);
+    //     commandList->ResourceBarrier(m_useDml ? _countof(barriers) : 1, barriers);
 
-        auto rtv = m_RTVDescriptorHeap->GetCpuHandle(e_descFinalResultTextureRtv);
-        commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-        // Use linear clear color for gamma-correct rendering.
-        commandList->ClearRenderTargetView(rtv, Colors::Black, 0, nullptr);
+    //     auto rtv = m_RTVDescriptorHeap->GetCpuHandle(e_descFinalResultTextureRtv);
+    //     commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    //     // Use linear clear color for gamma-correct rendering.
+    //     commandList->ClearRenderTargetView(rtv, Colors::Black, 0, nullptr);
             
-        D3D12_VIEWPORT texViewport = {};
-        D3D12_RECT texScissor = {};
-        texViewport.Height = static_cast<FLOAT>(texScissor.bottom = m_origTextureHeight * 2);
-        texViewport.Width = static_cast<FLOAT>(texScissor.right = m_origTextureWidth * 2);
+    //     D3D12_VIEWPORT texViewport = {};
+    //     D3D12_RECT texScissor = {};
+    //     texViewport.Height = static_cast<FLOAT>(texScissor.bottom = m_origTextureHeight * 2);
+    //     texViewport.Width = static_cast<FLOAT>(texScissor.right = m_origTextureWidth * 2);
             
-        commandList->RSSetViewports(1, &texViewport);
-        commandList->RSSetScissorRects(1, &texScissor);
+    //     commandList->RSSetViewports(1, &texViewport);
+    //     commandList->RSSetScissorRects(1, &texScissor);
 
-        auto heap = m_SRVDescriptorHeap->Heap();
+    //     auto heap = m_SRVDescriptorHeap->Heap();
 
-        // Convert output tensor back to image (model output -> final result texture)
-        if (m_useDml)
-        {
-            commandList->SetGraphicsRootSignature(m_tensorRenderRootSignature.Get());
-            commandList->SetPipelineState(m_tensorRenderPipelineState.Get());
-            commandList->SetDescriptorHeaps(1, &heap);
+    //     // Convert output tensor back to image (model output -> final result texture)
+    //     if (m_useDml)
+    //     {
+    //         commandList->SetGraphicsRootSignature(m_tensorRenderRootSignature.Get());
+    //         commandList->SetPipelineState(m_tensorRenderPipelineState.Get());
+    //         commandList->SetDescriptorHeaps(1, &heap);
 
-            ImageLayoutCB imageLayoutCB = {};
-            imageLayoutCB.Height = m_origTextureHeight * 2;
-            imageLayoutCB.Width = m_origTextureWidth * 2;
-            imageLayoutCB.UseNhwc = (m_tensorLayout == TensorLayout::NHWC);
+    //         ImageLayoutCB imageLayoutCB = {};
+    //         imageLayoutCB.Height = m_origTextureHeight * 2;
+    //         imageLayoutCB.Width = m_origTextureWidth * 2;
+    //         imageLayoutCB.UseNhwc = (m_tensorLayout == TensorLayout::NHWC);
 
-            commandList->SetGraphicsRoot32BitConstants(e_rrpIdxCB, 3, &imageLayoutCB, 0);
-            commandList->SetGraphicsRootDescriptorTable(e_rrpIdxSRV, m_SRVDescriptorHeap->GetGpuHandle(e_descModelOutput));
-        }
-        // Bilinear upscale of original image (original texture -> final result texture)
-        else
-        {
-            commandList->SetGraphicsRootSignature(m_texRootSignatureLinear.Get());
-            commandList->SetPipelineState(m_texPipelineStateLinear.Get());
-            commandList->SetDescriptorHeaps(1, &heap);
+    //         commandList->SetGraphicsRoot32BitConstants(e_rrpIdxCB, 3, &imageLayoutCB, 0);
+    //         commandList->SetGraphicsRootDescriptorTable(e_rrpIdxSRV, m_SRVDescriptorHeap->GetGpuHandle(e_descModelOutput));
+    //     }
+    //     // Bilinear upscale of original image (original texture -> final result texture)
+    //     else
+    //     {
+    //         commandList->SetGraphicsRootSignature(m_texRootSignatureLinear.Get());
+    //         commandList->SetPipelineState(m_texPipelineStateLinear.Get());
+    //         commandList->SetDescriptorHeaps(1, &heap);
 
-            commandList->SetGraphicsRootDescriptorTable(0, m_SRVDescriptorHeap->GetGpuHandle(e_descTexture));
-        }
+    //         commandList->SetGraphicsRootDescriptorTable(0, m_SRVDescriptorHeap->GetGpuHandle(e_descTexture));
+    //     }
 
-        // Set necessary state.
-        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
-        commandList->IASetIndexBuffer(&m_indexBufferView);
+    //     // Set necessary state.
+    //     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    //     commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+    //     commandList->IASetIndexBuffer(&m_indexBufferView);
 
-        // Draw quad.
-        commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+    //     // Draw quad.
+    //     commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
             
-        PIXEndEvent(commandList);
-    }
+    //     PIXEndEvent(commandList);
+    // }
     
-    // Render the result to the screen
-    auto viewport = m_deviceResources->GetScreenViewport();
-    auto scissorRect = m_deviceResources->GetScissorRect();
+    // // Render the result to the screen
+    // auto viewport = m_deviceResources->GetScreenViewport();
+    // auto scissorRect = m_deviceResources->GetScissorRect();
 
-    {
-        PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render to screen");
+    // {
+    //     PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render to screen");
 
-        D3D12_RESOURCE_BARRIER barriers[] = {
-            CD3DX12_RESOURCE_BARRIER::Transition(m_finalResultTexture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-            CD3DX12_RESOURCE_BARRIER::Transition(m_modelOutput.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-            CD3DX12_RESOURCE_BARRIER::UAV(nullptr)
-        };
+    //     D3D12_RESOURCE_BARRIER barriers[] = {
+    //         CD3DX12_RESOURCE_BARRIER::Transition(m_finalResultTexture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+    //         CD3DX12_RESOURCE_BARRIER::Transition(m_modelOutput.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+    //         CD3DX12_RESOURCE_BARRIER::UAV(nullptr)
+    //     };
 
-        commandList->ResourceBarrier(m_useDml ? _countof(barriers) : 1, barriers);
-        commandList->OMSetRenderTargets(1, &m_deviceResources->GetRenderTargetView(), FALSE, nullptr);
+    //     commandList->ResourceBarrier(m_useDml ? _countof(barriers) : 1, barriers);
+    //     commandList->OMSetRenderTargets(1, &m_deviceResources->GetRenderTargetView(), FALSE, nullptr);
 
-        commandList->SetGraphicsRootSignature(m_texRootSignatureLinear.Get());
-        commandList->SetPipelineState(m_texPipelineStateLinear.Get());
+    //     commandList->SetGraphicsRootSignature(m_texRootSignatureLinear.Get());
+    //     commandList->SetPipelineState(m_texPipelineStateLinear.Get());
 
-        auto heap = m_SRVDescriptorHeap->Heap();
-        commandList->SetDescriptorHeaps(1, &heap);
+    //     auto heap = m_SRVDescriptorHeap->Heap();
+    //     commandList->SetDescriptorHeaps(1, &heap);
 
-        commandList->SetGraphicsRootDescriptorTable(0,
-            m_SRVDescriptorHeap->GetGpuHandle(e_descFinalResultTextureSrv));
+    //     commandList->SetGraphicsRootDescriptorTable(0,
+    //         m_SRVDescriptorHeap->GetGpuHandle(e_descFinalResultTextureSrv));
 
-        // Set necessary state.
-        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        commandList->IASetIndexBuffer(&m_indexBufferView);
+    //     // Set necessary state.
+    //     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    //     commandList->IASetIndexBuffer(&m_indexBufferView);
 
-        // Draw full screen texture
-        commandList->RSSetViewports(1, &viewport);
-        commandList->RSSetScissorRects(1, &scissorRect);
-        commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+    //     // Draw full screen texture
+    //     commandList->RSSetViewports(1, &viewport);
+    //     commandList->RSSetScissorRects(1, &scissorRect);
+    //     commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 
-        commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+    //     commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
         
-        PIXEndEvent(commandList);
-    }
+    //     PIXEndEvent(commandList);
+    // }
 
-    // Draw zoomed picture-in-picture window
-    if (m_showPip)
-    {
-        PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render PIP");
+    // // Draw zoomed picture-in-picture window
+    // if (m_showPip)
+    // {
+    //     PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render PIP");
 
-        // Use nearest-neighbor interpolation so individual pixels are visible.
-        commandList->SetGraphicsRootSignature(m_texRootSignatureNN.Get());
-        commandList->SetPipelineState(m_texPipelineStateNN.Get());
+    //     // Use nearest-neighbor interpolation so individual pixels are visible.
+    //     commandList->SetGraphicsRootSignature(m_texRootSignatureNN.Get());
+    //     commandList->SetPipelineState(m_texPipelineStateNN.Get());
 
-        if (m_zoomUpdated)
-        {
-            UpdateZoomVertexBuffer();
-            m_zoomUpdated = false;
-        }
+    //     if (m_zoomUpdated)
+    //     {
+    //         UpdateZoomVertexBuffer();
+    //         m_zoomUpdated = false;
+    //     }
 
-        auto pipViewport = viewport;
-        auto pipScissor = scissorRect;
+    //     auto pipViewport = viewport;
+    //     auto pipScissor = scissorRect;
 
-        pipViewport.Width = viewport.Width * c_pipSize;
-        pipViewport.Height = viewport.Height * c_pipSize;
-        pipScissor.right = static_cast<LONG>(scissorRect.right * c_pipSize);
-        pipScissor.bottom = static_cast<LONG>(scissorRect.bottom * c_pipSize);
+    //     pipViewport.Width = viewport.Width * c_pipSize;
+    //     pipViewport.Height = viewport.Height * c_pipSize;
+    //     pipScissor.right = static_cast<LONG>(scissorRect.right * c_pipSize);
+    //     pipScissor.bottom = static_cast<LONG>(scissorRect.bottom * c_pipSize);
 
-        commandList->SetGraphicsRootDescriptorTable(0,
-            m_SRVDescriptorHeap->GetGpuHandle(e_descFinalResultTextureSrv));
+    //     commandList->SetGraphicsRootDescriptorTable(0,
+    //         m_SRVDescriptorHeap->GetGpuHandle(e_descFinalResultTextureSrv));
 
-        commandList->RSSetViewports(1, &pipViewport);
-        commandList->RSSetScissorRects(1, &pipScissor);
-        commandList->IASetVertexBuffers(0, 1, &m_zoomedVertexBufferView);
+    //     commandList->RSSetViewports(1, &pipViewport);
+    //     commandList->RSSetScissorRects(1, &pipScissor);
+    //     commandList->IASetVertexBuffers(0, 1, &m_zoomedVertexBufferView);
 
-        commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+    //     commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
         
-        PIXEndEvent(commandList);
-    }
+    //     PIXEndEvent(commandList);
+    // }
     
-    // Render the UI
-    {
-        PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render UI");
+    // // Render the UI
+    // {
+    //     PIXBeginEvent(commandList, PIX_COLOR_DEFAULT, L"Render UI");
 
-        commandList->RSSetViewports(1, &viewport);
-        commandList->RSSetScissorRects(1, &scissorRect);
+    //     commandList->RSSetViewports(1, &viewport);
+    //     commandList->RSSetScissorRects(1, &scissorRect);
 
-        auto size = m_deviceResources->GetOutputSize();
-        auto safe = SimpleMath::Viewport::ComputeTitleSafeArea(size.right, size.bottom);
+    //     auto size = m_deviceResources->GetOutputSize();
+    //     auto safe = SimpleMath::Viewport::ComputeTitleSafeArea(size.right, size.bottom);
         
-        // Draw a border around the PIP so it stands out.
-        if (m_showPip)
-        {
-            m_lineEffect->Apply(commandList);
-            m_lineBatch->Begin(commandList);
+    //     // Draw a border around the PIP so it stands out.
+    //     if (m_showPip)
+    //     {
+    //         m_lineEffect->Apply(commandList);
+    //         m_lineBatch->Begin(commandList);
 
-            VertexPositionColor lowerLeft(SimpleMath::Vector3(0.f, size.bottom * c_pipSize, 0.f), ATG::Colors::White);
-            VertexPositionColor upperRight(SimpleMath::Vector3(size.right * c_pipSize, 0.f, 0.f), ATG::Colors::White);
-            VertexPositionColor lowerRight(SimpleMath::Vector3(size.right * c_pipSize, size.bottom * c_pipSize, 0.f), ATG::Colors::White);
+    //         VertexPositionColor lowerLeft(SimpleMath::Vector3(0.f, size.bottom * c_pipSize, 0.f), ATG::Colors::White);
+    //         VertexPositionColor upperRight(SimpleMath::Vector3(size.right * c_pipSize, 0.f, 0.f), ATG::Colors::White);
+    //         VertexPositionColor lowerRight(SimpleMath::Vector3(size.right * c_pipSize, size.bottom * c_pipSize, 0.f), ATG::Colors::White);
 
-            m_lineBatch->DrawLine(lowerLeft, lowerRight);
-            m_lineBatch->DrawLine(upperRight, lowerRight);
+    //         m_lineBatch->DrawLine(lowerLeft, lowerRight);
+    //         m_lineBatch->DrawLine(upperRight, lowerRight);
 
-            m_lineBatch->End();
-        }
+    //         m_lineBatch->End();
+    //     }
 
-        // Draw the text HUD.
-        ID3D12DescriptorHeap* fontHeaps[] = { m_fontDescriptorHeap->Heap() };
-        commandList->SetDescriptorHeaps(_countof(fontHeaps), fontHeaps);
+    //     // Draw the text HUD.
+    //     ID3D12DescriptorHeap* fontHeaps[] = { m_fontDescriptorHeap->Heap() };
+    //     commandList->SetDescriptorHeaps(_countof(fontHeaps), fontHeaps);
                 
-        m_spriteBatch->Begin(commandList);
+    //     m_spriteBatch->Begin(commandList);
 
-        float xCenter = static_cast<float>(safe.left + (safe.right - safe.left) / 2);
+    //     float xCenter = static_cast<float>(safe.left + (safe.right - safe.left) / 2);
 
-        const wchar_t* mainLegend = m_ctrlConnected ?
-            L"[View] Exit   [Y] Toggle PIP   [A] Upscale Mode   [X] Play/Pause"
-            : L"ESC - Exit     Z - Toggle PIP     SPACE - Upscale Mode     ENTER - Play/Pause";
-        SimpleMath::Vector2 mainLegendSize = m_legendFont->MeasureString(mainLegend);
-        auto mainLegendPos = SimpleMath::Vector2(xCenter - mainLegendSize.x / 2, static_cast<float>(safe.bottom) - m_legendFont->GetLineSpacing());
+    //     const wchar_t* mainLegend = m_ctrlConnected ?
+    //         L"[View] Exit   [Y] Toggle PIP   [A] Upscale Mode   [X] Play/Pause"
+    //         : L"ESC - Exit     Z - Toggle PIP     SPACE - Upscale Mode     ENTER - Play/Pause";
+    //     SimpleMath::Vector2 mainLegendSize = m_legendFont->MeasureString(mainLegend);
+    //     auto mainLegendPos = SimpleMath::Vector2(xCenter - mainLegendSize.x / 2, static_cast<float>(safe.bottom) - m_legendFont->GetLineSpacing());
 
-        // Render a drop shadow by drawing the text twice with a slight offset.
-        DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
-            mainLegend, mainLegendPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.0f, 0.0f, 0.0f, 0.25f));
-        DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
-            mainLegend, mainLegendPos, ATG::Colors::White);
+    //     // Render a drop shadow by drawing the text twice with a slight offset.
+    //     DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
+    //         mainLegend, mainLegendPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.0f, 0.0f, 0.0f, 0.25f));
+    //     DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
+    //         mainLegend, mainLegendPos, ATG::Colors::White);
 
-        if (m_showPip)
-        {
-            const wchar_t* pipLegend = m_ctrlConnected ?
-                L"[LThumb] Move Zoom Target\n[LT][RT] Zoom In/Out"
-                : L"ARROWS - Move Zoom Target\nW - Zoom In\nS - Zoom Out";
-            auto pipLegendPos = SimpleMath::Vector2(static_cast<float>(safe.left), 20.f + size.bottom * c_pipSize);
+    //     if (m_showPip)
+    //     {
+    //         const wchar_t* pipLegend = m_ctrlConnected ?
+    //             L"[LThumb] Move Zoom Target\n[LT][RT] Zoom In/Out"
+    //             : L"ARROWS - Move Zoom Target\nW - Zoom In\nS - Zoom Out";
+    //         auto pipLegendPos = SimpleMath::Vector2(static_cast<float>(safe.left), 20.f + size.bottom * c_pipSize);
 
-            DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
-                pipLegend, pipLegendPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.0f, 0.0f, 0.0f, 0.25f));
-            DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
-                pipLegend, pipLegendPos, ATG::Colors::White);
-        }
+    //         DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
+    //             pipLegend, pipLegendPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.0f, 0.0f, 0.0f, 0.25f));
+    //         DX::DrawControllerString(m_spriteBatch.get(), m_legendFont.get(), m_ctrlFont.get(),
+    //             pipLegend, pipLegendPos, ATG::Colors::White);
+    //     }
 
-        const wchar_t* modeLabel = L"Upscale mode:";
-        SimpleMath::Vector2 modeLabelSize = m_labelFontBold->MeasureString(modeLabel);
-        auto modeLabelPos = SimpleMath::Vector2(safe.right - modeLabelSize.x, static_cast<float>(safe.top));
+    //     const wchar_t* modeLabel = L"Upscale mode:";
+    //     SimpleMath::Vector2 modeLabelSize = m_labelFontBold->MeasureString(modeLabel);
+    //     auto modeLabelPos = SimpleMath::Vector2(safe.right - modeLabelSize.x, static_cast<float>(safe.top));
 
-        m_labelFontBold->DrawString(m_spriteBatch.get(), modeLabel, modeLabelPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
-        m_labelFontBold->DrawString(m_spriteBatch.get(), modeLabel, modeLabelPos, ATG::Colors::White);
+    //     m_labelFontBold->DrawString(m_spriteBatch.get(), modeLabel, modeLabelPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
+    //     m_labelFontBold->DrawString(m_spriteBatch.get(), modeLabel, modeLabelPos, ATG::Colors::White);
 
-        const wchar_t* modeType = m_useDml ? L"Super-resolution Neural Network" : L"Bilinear Filter";
-        SimpleMath::Vector2 modeTypeSize = m_labelFont->MeasureString(modeType);
-        auto modeTypePos = SimpleMath::Vector2(safe.right - modeTypeSize.x, static_cast<float>(safe.top) + m_labelFontBold->GetLineSpacing());
+    //     const wchar_t* modeType = m_useDml ? L"Super-resolution Neural Network" : L"Bilinear Filter";
+    //     SimpleMath::Vector2 modeTypeSize = m_labelFont->MeasureString(modeType);
+    //     auto modeTypePos = SimpleMath::Vector2(safe.right - modeTypeSize.x, static_cast<float>(safe.top) + m_labelFontBold->GetLineSpacing());
 
-        m_labelFont->DrawString(m_spriteBatch.get(), modeType, modeTypePos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
-        m_labelFont->DrawString(m_spriteBatch.get(), modeType, modeTypePos, ATG::Colors::White);
+    //     m_labelFont->DrawString(m_spriteBatch.get(), modeType, modeTypePos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
+    //     m_labelFont->DrawString(m_spriteBatch.get(), modeType, modeTypePos, ATG::Colors::White);
 
-        wchar_t fps[16];
-        swprintf_s(fps, 16, L"%0.2f FPS", m_fps.GetFPS());
-        SimpleMath::Vector2 fpsSize = m_labelFont->MeasureString(fps);
-        auto fpsPos = SimpleMath::Vector2(safe.right - fpsSize.x, static_cast<float>(safe.top) + m_labelFont->GetLineSpacing() * 3.f);
+    //     wchar_t fps[16];
+    //     unsigned long long sys_2 = GetCurrentTimeMsec();
+    //     swprintf_s(fps, 16, L"%0.2f FPS", sys_2 - sys_1);
+    //     SimpleMath::Vector2 fpsSize = m_labelFont->MeasureString(fps);
+    //     auto fpsPos = SimpleMath::Vector2(safe.right - fpsSize.x, static_cast<float>(safe.top) + m_labelFont->GetLineSpacing() * 3.f);
 
-        m_labelFont->DrawString(m_spriteBatch.get(), fps, fpsPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
-        m_labelFont->DrawString(m_spriteBatch.get(), fps, fpsPos, ATG::Colors::White);
+    //     m_labelFont->DrawString(m_spriteBatch.get(), fps, fpsPos + SimpleMath::Vector2(2.f, 2.f), SimpleMath::Vector4(0.f, 0.f, 0.f, 0.25f));
+    //     m_labelFont->DrawString(m_spriteBatch.get(), fps, fpsPos, ATG::Colors::White);
 
-        m_spriteBatch->End();
+    //     m_spriteBatch->End();
 
-        PIXEndEvent(commandList);
-    }
+    //     PIXEndEvent(commandList);
+    // }
 
-    // Show the new frame.
+    // // Show the new frame.
     PIXBeginEvent(m_deviceResources->GetCommandQueue(), PIX_COLOR_DEFAULT, L"Present");
 
     m_deviceResources->Present();
 
     PIXEndEvent(m_deviceResources->GetCommandQueue());
 
-    m_graphicsMemory->Commit(m_deviceResources->GetCommandQueue());
+    m_graphicsMemory->Commit(m_deviceResources->GetCommandQueue());\
+    unsigned long long sys_2 = GetCurrentTimeMsec();
+    std::wostringstream output_string;
+    output_string << L"======predict time: " << sys_2 - sys_1 << "\n";
+    OutputDebugStringW(output_string.str().c_str());
 }
 
 void Sample::UpdateZoomVertexBuffer()

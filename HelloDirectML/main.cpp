@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "pch.h"
+#include <windows.h> 
 
 using winrt::com_ptr;
 using winrt::check_hresult;
@@ -186,44 +187,88 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         __uuidof(dmlDevice),
         dmlDevice.put_void()));
 
-    constexpr UINT tensorSizes[4] = { 1, 2, 3, 4};
-    constexpr UINT tensorElementCount = tensorSizes[0] * tensorSizes[1] * tensorSizes[2] * tensorSizes[3];
+    constexpr UINT inputSizes[4] = { 1, 3, 224, 224};
+    constexpr UINT inputElementCount = inputSizes[0] * inputSizes[1] * inputSizes[2] * inputSizes[3];
+    DML_BUFFER_TENSOR_DESC inputTensorDesc = {};
+    inputTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
+    inputTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
+    inputTensorDesc.DimensionCount = ARRAYSIZE(inputSizes);
+    inputTensorDesc.Sizes = inputSizes;
+    inputTensorDesc.Strides = nullptr;
+    inputTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
+        inputTensorDesc.DataType,
+        inputTensorDesc.DimensionCount,
+        inputTensorDesc.Sizes,
+        inputTensorDesc.Strides);
 
-    DML_BUFFER_TENSOR_DESC dmlBufferTensorDesc = {};
-    dmlBufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
-    dmlBufferTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
-    dmlBufferTensorDesc.DimensionCount = ARRAYSIZE(tensorSizes);
-    dmlBufferTensorDesc.Sizes = tensorSizes;
-    dmlBufferTensorDesc.Strides = nullptr;
-    dmlBufferTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
-        dmlBufferTensorDesc.DataType,
-        dmlBufferTensorDesc.DimensionCount,
-        dmlBufferTensorDesc.Sizes,
-        dmlBufferTensorDesc.Strides);
+    constexpr UINT weightSizes[4] = { 32, 3, 3, 3};
+    constexpr UINT weightElementCount = weightSizes[0] * weightSizes[1] * weightSizes[2] * weightSizes[3];
+    DML_BUFFER_TENSOR_DESC weightTensorDesc = {};
+    weightTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
+    weightTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
+    weightTensorDesc.DimensionCount = ARRAYSIZE(weightSizes);
+    weightTensorDesc.Sizes = weightSizes;
+    weightTensorDesc.Strides = nullptr;
+    weightTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
+        weightTensorDesc.DataType,
+        weightTensorDesc.DimensionCount,
+        weightTensorDesc.Sizes,
+        weightTensorDesc.Strides);
 
+    constexpr UINT outputSizes[4] = { 1, 32, 112, 112};
+    constexpr UINT outputElementCount = outputSizes[0] * outputSizes[1] * outputSizes[2] * outputSizes[3];
+
+    DML_BUFFER_TENSOR_DESC outputTensorDesc = {};
+    outputTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
+    outputTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
+    outputTensorDesc.DimensionCount = ARRAYSIZE(outputSizes);
+    outputTensorDesc.Sizes = outputSizes;
+    outputTensorDesc.Strides = nullptr;
+    outputTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
+        outputTensorDesc.DataType,
+        outputTensorDesc.DimensionCount,
+        outputTensorDesc.Sizes,
+        outputTensorDesc.Strides);
     com_ptr<IDMLOperator> dmlOperator;
     {
         // Create DirectML operator(s). Operators represent abstract functions such as "multiply", "reduce", "convolution", or even
         // compound operations such as recurrent neural nets. This example creates an instance of the Identity operator,
         // which applies the function f(x) = x for all elements in a tensor.
+      DML_TENSOR_DESC input_tensor_desc = {DML_TENSOR_TYPE_BUFFER,
+                                           &inputTensorDesc};
 
-        DML_TENSOR_DESC dmlTensorDesc{};
-        dmlTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
-        dmlTensorDesc.Desc = &dmlBufferTensorDesc;
+      DML_TENSOR_DESC weights_tensor_desc = {DML_TENSOR_TYPE_BUFFER,
+                                             &weightTensorDesc};
 
-        DML_ELEMENT_WISE_IDENTITY_OPERATOR_DESC dmlIdentityOperatorDesc{};
-        dmlIdentityOperatorDesc.InputTensor = &dmlTensorDesc;
-        dmlIdentityOperatorDesc.OutputTensor = &dmlTensorDesc; // Input and output tensors have same size/type.
+      DML_TENSOR_DESC output_tensor_desc = {DML_TENSOR_TYPE_BUFFER,
+                                            &outputTensorDesc};
 
-        // Like Direct3D 12, these DESC structs don't need to be long-lived. This means, for example, that it's safe to place
-        // the DML_OPERATOR_DESC (and all the subobjects it points to) on the stack, since they're no longer needed after
-        // CreateOperator returns.
-        DML_OPERATOR_DESC dmlOperatorDesc{};
-        dmlOperatorDesc.Type = DML_OPERATOR_ELEMENT_WISE_IDENTITY;
-        dmlOperatorDesc.Desc = &dmlIdentityOperatorDesc;
+const uint32_t strides[2] = {2, 2};
+  const uint32_t dilations[2] = {1, 1};
+  const uint32_t start_padding[2] = {0, 0};
+  const uint32_t end_padding[2] = {1, 1};
+  const uint32_t output_padding[2] = {0, 0};
+
+  DML_CONVOLUTION_OPERATOR_DESC conv_operator_desc = {
+      &input_tensor_desc,
+      &weights_tensor_desc,
+      nullptr,
+      &output_tensor_desc,
+      DML_CONVOLUTION_MODE_CROSS_CORRELATION,
+      DML_CONVOLUTION_DIRECTION_FORWARD,
+      2,
+      strides,
+      dilations,
+      start_padding,
+      end_padding,
+      output_padding,
+      1,
+      nullptr};
+  DML_OPERATOR_DESC operator_desc = {DML_OPERATOR_CONVOLUTION,
+                                     &conv_operator_desc};
 
         check_hresult(dmlDevice->CreateOperator(
-            &dmlOperatorDesc,
+            &operator_desc,
             __uuidof(dmlOperator),
             dmlOperator.put_void()));
     }
@@ -380,13 +425,13 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     // Create tensor buffers for upload/input/output/readback of the tensor elements.
 
     // 24 elements * 4 == 96 bytes.
-    UINT64 tensorBufferSize{ dmlBufferTensorDesc.TotalTensorSizeInBytes };
+    UINT64 inputBufferSize{ inputTensorDesc.TotalTensorSizeInBytes };
 
     com_ptr<ID3D12Resource> uploadBuffer;
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize),
+        &CD3DX12_RESOURCE_DESC::Buffer(inputBufferSize),
         D3D12_RESOURCE_STATE_GENERIC_READ,
         nullptr,
         __uuidof(uploadBuffer),
@@ -396,26 +441,26 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+        &CD3DX12_RESOURCE_DESC::Buffer(inputBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
         D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         __uuidof(inputBuffer),
         inputBuffer.put_void()));
 
-    std::wcout << std::fixed; std::wcout.precision(2);
-    std::array<FLOAT, tensorElementCount> inputTensorElementArray;
+    // std::wcout << std::fixed; std::wcout.precision(2);
+    std::array<FLOAT, inputElementCount> inputTensorElementArray;
     {
         std::wcout << L"input tensor: ";
         for (auto & element : inputTensorElementArray)
         {
             element = 1.618f;
-            std::wcout << element << L' ';
+            // std::wcout << element << L' ';
         };
         std::wcout << std::endl;
 
         D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
         tensorSubresourceData.pData = inputTensorElementArray.data();
-        tensorSubresourceData.RowPitch = tensorBufferSize;
+        tensorSubresourceData.RowPitch = inputBufferSize;
         tensorSubresourceData.SlicePitch = tensorSubresourceData.RowPitch;
 
         // Upload the input tensor to the GPU.
@@ -438,28 +483,100 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
             );
     }
 
-    DML_BUFFER_BINDING inputBufferBinding{ inputBuffer.get(), 0, tensorBufferSize };
-    DML_BINDING_DESC inputBindingDesc{ DML_BINDING_TYPE_BUFFER, &inputBufferBinding };
-    dmlBindingTable->BindInputs(1, &inputBindingDesc);
+    // weights.
+    UINT64 weightBufferSize{ weightTensorDesc.TotalTensorSizeInBytes };
 
-    com_ptr<ID3D12Resource> outputBuffer;
+    com_ptr<ID3D12Resource> weightUploadBuffer;
+    check_hresult(d3D12Device->CreateCommittedResource(
+        &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+        D3D12_HEAP_FLAG_NONE,
+        &CD3DX12_RESOURCE_DESC::Buffer(weightBufferSize),
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        __uuidof(weightUploadBuffer),
+        weightUploadBuffer.put_void()));
+
+    com_ptr<ID3D12Resource> weightBuffer;
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+        &CD3DX12_RESOURCE_DESC::Buffer(weightBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        __uuidof(weightBuffer),
+        weightBuffer.put_void()));
+
+    // std::wcout << std::fixed; std::wcout.precision(2);
+    std::array<FLOAT, weightElementCount> weightElementArray;
+    {
+        std::wcout << L"input tensor: ";
+        for (auto & element : weightElementArray)
+        {
+            element = 1.618f;
+            // std::wcout << element << L' ';
+        };
+        std::wcout << std::endl;
+
+        D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
+        tensorSubresourceData.pData = weightElementArray.data();
+        tensorSubresourceData.RowPitch = weightBufferSize;
+        tensorSubresourceData.SlicePitch = tensorSubresourceData.RowPitch;
+
+        // Upload the input tensor to the GPU.
+        ::UpdateSubresources(
+            commandList.get(),
+            weightBuffer.get(),
+            weightUploadBuffer.get(),
+            0,
+            0,
+            1,
+            &tensorSubresourceData);
+
+        commandList->ResourceBarrier(
+            1,
+            &CD3DX12_RESOURCE_BARRIER::Transition(
+                weightBuffer.get(),
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                )
+            );
+    }
+
+    DML_BUFFER_BINDING inputBufferBinding[3];
+    inputBufferBinding[0] = { inputBuffer.get(), 0, inputBufferSize };
+    inputBufferBinding[1] = { weightBuffer.get(), 0, weightBufferSize };
+    inputBufferBinding[2] =  { nullptr, 0, 0 };
+    DML_BINDING_DESC inputBindingDesc[3];
+    inputBindingDesc[0] = { DML_BINDING_TYPE_BUFFER, &inputBufferBinding[0] };
+    inputBindingDesc[1] = { DML_BINDING_TYPE_BUFFER, &inputBufferBinding[1] };
+    inputBindingDesc[2] = { DML_BINDING_TYPE_NONE, nullptr};
+    dmlBindingTable->BindInputs(3, inputBindingDesc);
+
+    com_ptr<ID3D12Resource> outputBuffer;
+    UINT64 outputBufferSize{ outputTensorDesc.TotalTensorSizeInBytes };
+    check_hresult(d3D12Device->CreateCommittedResource(
+        &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+        D3D12_HEAP_FLAG_NONE,
+        &CD3DX12_RESOURCE_DESC::Buffer(outputBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         nullptr,
         __uuidof(outputBuffer),
         outputBuffer.put_void()));
 
-    DML_BUFFER_BINDING outputBufferBinding{ outputBuffer.get(), 0, tensorBufferSize };
+    DML_BUFFER_BINDING outputBufferBinding{ outputBuffer.get(), 0, outputBufferSize };
     DML_BINDING_DESC outputBindingDesc{ DML_BINDING_TYPE_BUFFER, &outputBufferBinding };
     dmlBindingTable->BindOutputs(1, &outputBindingDesc);
 
+	SYSTEMTIME sys_1;
+	GetLocalTime(&sys_1);
     // Record execution of the compiled operator.
     dmlCommandRecorder->RecordDispatch(commandList.get(), dmlCompiledOperator.get(), dmlBindingTable.get());
 
     CloseExecuteResetWait(d3D12Device, commandQueue, commandAllocator, commandList);
+
+	SYSTEMTIME sys_2;
+	GetLocalTime(&sys_2);
+	std::wcout << L"predict time: " << sys_2.wMilliseconds - sys_1.wMilliseconds << "\n";
 
     // The output buffer now contains the result of the identity operator,
     // so read it back if you want the CPU to access it.
@@ -468,7 +585,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize),
+        &CD3DX12_RESOURCE_DESC::Buffer(outputBufferSize),
         D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         __uuidof(readbackBuffer),
@@ -487,17 +604,19 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
 
     CloseExecuteResetWait(d3D12Device, commandQueue, commandAllocator, commandList);
 
-    D3D12_RANGE tensorBufferRange{ 0, tensorBufferSize };
+    D3D12_RANGE tensorBufferRange{ 0, outputBufferSize };
     FLOAT* outputBufferData{};
     check_hresult(readbackBuffer->Map(0, &tensorBufferRange, reinterpret_cast<void**>(&outputBufferData)));
 
     std::wcout << L"output tensor: ";
-    for (size_t tensorElementIndex{ 0 }; tensorElementIndex < tensorElementCount; ++tensorElementIndex, ++outputBufferData)
+    for (size_t tensorElementIndex{ 0 }; tensorElementIndex < outputElementCount; ++tensorElementIndex, ++outputBufferData)
     {
-        std::wcout << *outputBufferData << L' ';
+        // std::wcout << *outputBufferData << L' ';
     }
     std::wcout << std::endl;
 
     D3D12_RANGE emptyRange{ 0, 0 };
     readbackBuffer->Unmap(0, &emptyRange);
+	GetLocalTime(&sys_2);
+	std::wcout << L"predict time: " << sys_2.wMilliseconds - sys_1.wMilliseconds << "\n";
 }
