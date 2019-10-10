@@ -186,7 +186,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         __uuidof(dmlDevice),
         dmlDevice.put_void()));
 
-    constexpr UINT tensorSizes[4] = { 1, 2, 3, 4};
+    constexpr UINT tensorSizes[4] = { 1, 2, 1, 1};
     constexpr UINT tensorElementCount = tensorSizes[0] * tensorSizes[1] * tensorSizes[2] * tensorSizes[3];
 
     DML_BUFFER_TENSOR_DESC dmlBufferTensorDesc = {};
@@ -211,16 +211,17 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         dmlTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
         dmlTensorDesc.Desc = &dmlBufferTensorDesc;
 
-        DML_ELEMENT_WISE_IDENTITY_OPERATOR_DESC dmlIdentityOperatorDesc{};
-        dmlIdentityOperatorDesc.InputTensor = &dmlTensorDesc;
-        dmlIdentityOperatorDesc.OutputTensor = &dmlTensorDesc; // Input and output tensors have same size/type.
+		DML_ELEMENT_WISE_ADD_OPERATOR_DESC dmlAddOperatorDesc{};
+		dmlAddOperatorDesc.ATensor = &dmlTensorDesc;
+		dmlAddOperatorDesc.BTensor = &dmlTensorDesc;
+		dmlAddOperatorDesc.OutputTensor = &dmlTensorDesc; // Input and output tensors have same size/type.
 
         // Like Direct3D 12, these DESC structs don't need to be long-lived. This means, for example, that it's safe to place
         // the DML_OPERATOR_DESC (and all the subobjects it points to) on the stack, since they're no longer needed after
         // CreateOperator returns.
         DML_OPERATOR_DESC dmlOperatorDesc{};
-        dmlOperatorDesc.Type = DML_OPERATOR_ELEMENT_WISE_IDENTITY;
-        dmlOperatorDesc.Desc = &dmlIdentityOperatorDesc;
+        dmlOperatorDesc.Type = DML_OPERATOR_ELEMENT_WISE_ADD;
+        dmlOperatorDesc.Desc = &dmlAddOperatorDesc;
 
         check_hresult(dmlDevice->CreateOperator(
             &dmlOperatorDesc,
@@ -437,10 +438,15 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
                 )
             );
     }
-
-    DML_BUFFER_BINDING inputBufferBinding{ inputBuffer.get(), 0, tensorBufferSize };
-    DML_BINDING_DESC inputBindingDesc{ DML_BINDING_TYPE_BUFFER, &inputBufferBinding };
-    dmlBindingTable->BindInputs(1, &inputBindingDesc);
+	
+	DML_BUFFER_ARRAY_BINDING inputs_buffer = { 2, };
+	DML_BUFFER_BINDING inputBufferBinding[2];
+	inputBufferBinding[0] = { inputBuffer.get(), 0, tensorBufferSize };
+	inputBufferBinding[1] = { inputBuffer.get(), 0, tensorBufferSize };
+	DML_BINDING_DESC inputBindingDesc[2];
+	inputBindingDesc[0] = { DML_BINDING_TYPE_BUFFER, &inputBufferBinding[0] };
+	inputBindingDesc[1] = { DML_BINDING_TYPE_BUFFER, &inputBufferBinding[1] };
+    dmlBindingTable->BindInputs(2, inputBindingDesc);
 
     com_ptr<ID3D12Resource> outputBuffer;
     check_hresult(d3D12Device->CreateCommittedResource(
