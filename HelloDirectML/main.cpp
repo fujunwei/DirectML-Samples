@@ -186,7 +186,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         __uuidof(dmlDevice),
         dmlDevice.put_void()));
 
-    constexpr UINT tensorSizes[4] = { 1, 2, 3, 4};
+    constexpr UINT tensorSizes[4] = { 1, 4, 2, 1};
     constexpr UINT tensorElementCount = tensorSizes[0] * tensorSizes[1] * tensorSizes[2] * tensorSizes[3];
 
     DML_BUFFER_TENSOR_DESC dmlBufferTensorDesc = {};
@@ -201,26 +201,46 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         dmlBufferTensorDesc.Sizes,
         dmlBufferTensorDesc.Strides);
 
+	constexpr UINT outputTensor[4] = { 1, 1, 2, 1 };
+	DML_BUFFER_TENSOR_DESC outputBufferTensorDesc = {};
+	outputBufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_UINT32;
+	outputBufferTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
+	outputBufferTensorDesc.DimensionCount = ARRAYSIZE(outputTensor);
+	outputBufferTensorDesc.Sizes = outputTensor;
+	outputBufferTensorDesc.Strides = nullptr;
+	outputBufferTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
+		outputBufferTensorDesc.DataType,
+		outputBufferTensorDesc.DimensionCount,
+		outputBufferTensorDesc.Sizes,
+		outputBufferTensorDesc.Strides);
+
     com_ptr<IDMLOperator> dmlOperator;
-    {
-        // Create DirectML operator(s). Operators represent abstract functions such as "multiply", "reduce", "convolution", or even
-        // compound operations such as recurrent neural nets. This example creates an instance of the Identity operator,
-        // which applies the function f(x) = x for all elements in a tensor.
+	{
+		// Create DirectML operator(s). Operators represent abstract functions such as "multiply", "reduce", "convolution", or even
+		// compound operations such as recurrent neural nets. This example creates an instance of the Identity operator,
+		// which applies the function f(x) = x for all elements in a tensor.
 
-        DML_TENSOR_DESC dmlTensorDesc{};
-        dmlTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
-        dmlTensorDesc.Desc = &dmlBufferTensorDesc;
+		DML_TENSOR_DESC dmlTensorDesc{};
+		dmlTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
+		dmlTensorDesc.Desc = &dmlBufferTensorDesc;
 
-        DML_ELEMENT_WISE_IDENTITY_OPERATOR_DESC dmlIdentityOperatorDesc{};
-        dmlIdentityOperatorDesc.InputTensor = &dmlTensorDesc;
-        dmlIdentityOperatorDesc.OutputTensor = &dmlTensorDesc; // Input and output tensors have same size/type.
+		DML_TENSOR_DESC outputTensorDesc{};
+		outputTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
+		outputTensorDesc.Desc = &outputBufferTensorDesc;
 
+		DML_REDUCE_OPERATOR_DESC argmaxOperatorDesc{};
+		argmaxOperatorDesc.Function = DML_REDUCE_FUNCTION_ARGMAX;
+		argmaxOperatorDesc.InputTensor = &dmlTensorDesc;
+		argmaxOperatorDesc.OutputTensor = &outputTensorDesc; // Input and output tensors have same size/type.
+		argmaxOperatorDesc.AxisCount = 1;
+		const UINT axis[1] = {1};
+		argmaxOperatorDesc.Axes = axis;
         // Like Direct3D 12, these DESC structs don't need to be long-lived. This means, for example, that it's safe to place
         // the DML_OPERATOR_DESC (and all the subobjects it points to) on the stack, since they're no longer needed after
         // CreateOperator returns.
         DML_OPERATOR_DESC dmlOperatorDesc{};
-        dmlOperatorDesc.Type = DML_OPERATOR_ELEMENT_WISE_IDENTITY;
-        dmlOperatorDesc.Desc = &dmlIdentityOperatorDesc;
+        dmlOperatorDesc.Type = DML_OPERATOR_REDUCE;
+        dmlOperatorDesc.Desc = &argmaxOperatorDesc;
 
         check_hresult(dmlDevice->CreateOperator(
             &dmlOperatorDesc,
@@ -406,11 +426,14 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     std::array<FLOAT, tensorElementCount> inputTensorElementArray;
     {
         std::wcout << L"input tensor: ";
+		FLOAT data = 0.0f;
         for (auto & element : inputTensorElementArray)
         {
-            element = 1.618f;
+            element = data++;
             std::wcout << element << L' ';
         };
+		inputTensorElementArray[2] = 8;
+		inputTensorElementArray[5] = 10;
         std::wcout << std::endl;
 
         D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
@@ -442,17 +465,18 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     DML_BINDING_DESC inputBindingDesc{ DML_BINDING_TYPE_BUFFER, &inputBufferBinding };
     dmlBindingTable->BindInputs(1, &inputBindingDesc);
 
+	UINT64 outputTensorBufferSize{ outputBufferTensorDesc.TotalTensorSizeInBytes };
     com_ptr<ID3D12Resource> outputBuffer;
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+        &CD3DX12_RESOURCE_DESC::Buffer(outputTensorBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         nullptr,
         __uuidof(outputBuffer),
         outputBuffer.put_void()));
 
-    DML_BUFFER_BINDING outputBufferBinding{ outputBuffer.get(), 0, tensorBufferSize };
+    DML_BUFFER_BINDING outputBufferBinding{ outputBuffer.get(), 0, outputTensorBufferSize };
     DML_BINDING_DESC outputBindingDesc{ DML_BINDING_TYPE_BUFFER, &outputBufferBinding };
     dmlBindingTable->BindOutputs(1, &outputBindingDesc);
 
@@ -468,7 +492,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     check_hresult(d3D12Device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(tensorBufferSize),
+        &CD3DX12_RESOURCE_DESC::Buffer(outputTensorBufferSize),
         D3D12_RESOURCE_STATE_COPY_DEST,
         nullptr,
         __uuidof(readbackBuffer),
@@ -487,12 +511,13 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
 
     CloseExecuteResetWait(d3D12Device, commandQueue, commandAllocator, commandList);
 
-    D3D12_RANGE tensorBufferRange{ 0, tensorBufferSize };
-    FLOAT* outputBufferData{};
+    D3D12_RANGE tensorBufferRange{ 0, outputTensorBufferSize };
+    UINT32* outputBufferData{};
     check_hresult(readbackBuffer->Map(0, &tensorBufferRange, reinterpret_cast<void**>(&outputBufferData)));
 
     std::wcout << L"output tensor: ";
-    for (size_t tensorElementIndex{ 0 }; tensorElementIndex < tensorElementCount; ++tensorElementIndex, ++outputBufferData)
+	constexpr UINT outputElementCount = outputTensor[0] * outputTensor[1] * outputTensor[2] * outputTensor[3];
+    for (size_t tensorElementIndex{ 0 }; tensorElementIndex < outputElementCount; ++tensorElementIndex, ++outputBufferData)
     {
         std::wcout << *outputBufferData << L' ';
     }
