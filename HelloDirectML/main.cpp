@@ -8,6 +8,137 @@ using winrt::check_hresult;
 using winrt::check_bool;
 using winrt::handle;
 
+void InitWithDXCore(com_ptr<ID3D12Device>& d3D12Device,
+	com_ptr<ID3D12CommandQueue>& commandQueue,
+	com_ptr<ID3D12CommandAllocator>& commandAllocator,
+	com_ptr<ID3D12GraphicsCommandList>& commandList) {
+	HMODULE library = nullptr;
+	library = LoadLibrary(L"dxcore.dll");
+	if (!library) {
+		//throw hresult_invalid_argument(L"DXCore isn't support on this manchine.");
+		std::wcout << L"DXCore isn't support on this manchine. ";
+		return;
+	}
+
+	com_ptr<IDXCoreAdapterFactory> adapterFactory;
+	check_hresult(DXCoreCreateAdapterFactory(IID_PPV_ARGS(adapterFactory.put())));
+
+	com_ptr<IDXCoreAdapterList> spAdapterList;
+	const GUID dxGUIDs[] = { DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE };
+
+	check_hresult(
+		adapterFactory->CreateAdapterList(ARRAYSIZE(dxGUIDs), dxGUIDs, IID_PPV_ARGS(spAdapterList.put())));
+
+	com_ptr<IDXCoreAdapter> spAdapter = nullptr;
+	com_ptr<IDXCoreAdapter> currAdapter = nullptr;
+	bool chosenAdapterFound = false;
+	printf("Printing available adapters..\n");
+	for (UINT i = 0; i < spAdapterList->GetAdapterCount(); i++)
+	{
+		check_hresult(spAdapterList->GetAdapter(i, currAdapter.put()));
+
+		// If the adapter is a software adapter then don't consider it for index selection
+		bool isHardware;
+		size_t driverDescriptionSize;
+		check_hresult(currAdapter->GetPropertySize(DXCoreAdapterProperty::DriverDescription,
+			&driverDescriptionSize));
+		CHAR* driverDescription = new CHAR[driverDescriptionSize];
+		check_hresult(currAdapter->GetProperty(DXCoreAdapterProperty::IsHardware, &isHardware));
+		check_hresult(currAdapter->GetProperty(DXCoreAdapterProperty::DriverDescription,
+			driverDescriptionSize, driverDescription));
+		if (isHardware)
+		{
+			printf("Description: %s\n", driverDescription);
+		}
+		spAdapter = currAdapter;
+		currAdapter = nullptr;
+		free(driverDescription);
+	}
+
+	if (spAdapter == nullptr)
+	{
+		std::wcout << L"ERROR: No matching adapter with given adapter name: ";
+		return;
+	}
+	size_t driverDescriptionSize;
+	check_hresult(
+		spAdapter->GetPropertySize(DXCoreAdapterProperty::DriverDescription, &driverDescriptionSize));
+	CHAR* driverDescription = new CHAR[driverDescriptionSize];
+	spAdapter->GetProperty(DXCoreAdapterProperty::DriverDescription, driverDescriptionSize,
+		driverDescription);
+	printf("Using adapter : %s\n", driverDescription);
+	free(driverDescription);
+	IUnknown* pAdapter = spAdapter.get();
+	com_ptr<IDXGIAdapter> spDxgiAdapter;
+	D3D_FEATURE_LEVEL d3dFeatureLevel = D3D_FEATURE_LEVEL_1_0_CORE;
+	D3D12_COMMAND_LIST_TYPE commandQueueType = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+
+	// Check if adapter selected has DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS attribute selected. If
+	// so, then GPU was selected that has D3D12 and D3D11 capabilities. It would be the most stable
+	// to use DXGI to enumerate GPU and use D3D_FEATURE_LEVEL_11_0 so that image tensorization for
+	// video frames would be able to happen on the GPU.
+	if (spAdapter->IsAttributeSupported(DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS))
+	{
+		d3dFeatureLevel = D3D_FEATURE_LEVEL::D3D_FEATURE_LEVEL_11_0;
+		com_ptr<IDXGIFactory4> dxgiFactory4;
+		HRESULT hr;
+		try
+		{
+			hr = CreateDXGIFactory1(IID_PPV_ARGS(dxgiFactory4.put()));
+		}
+		catch (...)
+		{
+			hr = E_FAIL;
+		}
+		if (hr == S_OK)
+		{
+			// If DXGI factory creation was successful then get the IDXGIAdapter from the LUID
+			// acquired from the selectedAdapter
+			std::cout << "Using DXGI for adapter creation.." << std::endl;
+			LUID adapterLuid;
+			check_hresult(spAdapter->GetProperty(DXCoreAdapterProperty::InstanceLuid, &adapterLuid));
+			check_hresult(dxgiFactory4->EnumAdapterByLuid(adapterLuid, __uuidof(IDXGIAdapter),
+				spDxgiAdapter.put_void()));
+			pAdapter = spDxgiAdapter.get();
+		}
+	}
+
+	// create D3D12Device
+	//com_ptr<ID3D12Device> d3d12Device;
+	check_hresult(
+		D3D12CreateDevice(pAdapter, d3dFeatureLevel, __uuidof(ID3D12Device), d3D12Device.put_void()));
+
+	// create D3D12 command queue from device
+	//com_ptr<ID3D12CommandQueue> d3d12CommandQueue;
+	D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
+	commandQueueDesc.Type = commandQueueType;
+	check_hresult(d3D12Device->CreateCommandQueue(&commandQueueDesc, __uuidof(ID3D12CommandQueue),
+		commandQueue.put_void()));
+
+	check_hresult(d3D12Device->CreateCommandAllocator(
+		commandQueueType,
+		__uuidof(commandAllocator),
+		commandAllocator.put_void()));
+
+	check_hresult(d3D12Device->CreateCommandList(
+		0,
+		commandQueueType,
+		commandAllocator.get(),
+		nullptr,
+		__uuidof(commandList),
+		commandList.put_void()));
+	// create LearningModelDevice from command queue
+	/*auto factory = get_activation_factory<LearningModelDevice, ILearningModelDeviceFactoryNative>();
+	com_ptr<::IUnknown> spUnkLearningModelDevice;
+	THROW_IF_FAILED(
+		factory->CreateFromD3D12CommandQueue(d3d12CommandQueue.get(), spUnkLearningModelDevice.put()));
+	deviceList.push_back({
+		spUnkLearningModelDevice.as<LearningModelDevice>(),
+		deviceType,
+		deviceCreationLocation
+		});*/
+}
+
 void InitializeDirect3D12(
     com_ptr<ID3D12Device> & d3D12Device,
     com_ptr<ID3D12CommandQueue> & commandQueue,
@@ -79,7 +210,7 @@ void CloseExecuteResetWait(
     ID3D12CommandList* commandLists[] = { commandList.get() };
     commandQueue->ExecuteCommandLists(ARRAYSIZE(commandLists), commandLists);
 
-    check_hresult(commandList->Reset(commandAllocator.get(), nullptr));
+	check_hresult(commandList->Reset(commandAllocator.get(), nullptr));
 
     com_ptr<ID3D12Fence> d3D12Fence;
     check_hresult(d3D12Device->CreateFence(
@@ -168,7 +299,8 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     com_ptr<ID3D12GraphicsCommandList> commandList;
 
     // Set up Direct3D 12.
-    InitializeDirect3D12(d3D12Device, commandQueue, commandAllocator, commandList);
+    //InitializeDirect3D12(d3D12Device, commandQueue, commandAllocator, commandList);
+	InitWithDXCore(d3D12Device, commandQueue, commandAllocator, commandList);
 
     // Create the DirectML device.
 
@@ -176,7 +308,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
 
 #if defined (_DEBUG)
     // If the project is in a debug build, then enable debugging via DirectML debug layers with this flag.
-    dmlCreateDeviceFlags |= DML_CREATE_DEVICE_FLAG_DEBUG;
+    //dmlCreateDeviceFlags |= DML_CREATE_DEVICE_FLAG_DEBUG;
 #endif
 
     com_ptr<IDMLDevice> dmlDevice;

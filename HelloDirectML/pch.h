@@ -19,3 +19,5 @@
 #include <iostream>
 #include <iterator>
 #include <vector>
+#include <initguid.h>
+#include <dxcore.h>
