@@ -186,7 +186,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         __uuidof(dmlDevice),
         dmlDevice.put_void()));
 
-    constexpr UINT tensorSizes[4] = { 1, 4, 2, 1};
+    constexpr UINT tensorSizes[4] = { 1, 16000, 1, 1};
     constexpr UINT tensorElementCount = tensorSizes[0] * tensorSizes[1] * tensorSizes[2] * tensorSizes[3];
 
     DML_BUFFER_TENSOR_DESC dmlBufferTensorDesc = {};
@@ -201,9 +201,9 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         dmlBufferTensorDesc.Sizes,
         dmlBufferTensorDesc.Strides);
 
-	constexpr UINT outputTensor[4] = { 1, 1, 2, 1 };
+	constexpr UINT outputTensor[4] = { 1, 20, 1, 800 };
 	DML_BUFFER_TENSOR_DESC outputBufferTensorDesc = {};
-	outputBufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_UINT32;
+	outputBufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
 	outputBufferTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
 	outputBufferTensorDesc.DimensionCount = ARRAYSIZE(outputTensor);
 	outputBufferTensorDesc.Sizes = outputTensor;
@@ -228,19 +228,12 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
 		outputTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
 		outputTensorDesc.Desc = &outputBufferTensorDesc;
 
-		DML_REDUCE_OPERATOR_DESC argmaxOperatorDesc{};
-		argmaxOperatorDesc.Function = DML_REDUCE_FUNCTION_ARGMAX;
-		argmaxOperatorDesc.InputTensor = &dmlTensorDesc;
-		argmaxOperatorDesc.OutputTensor = &outputTensorDesc; // Input and output tensors have same size/type.
-		argmaxOperatorDesc.AxisCount = 1;
-		const UINT axis[1] = {1};
-		argmaxOperatorDesc.Axes = axis;
-        // Like Direct3D 12, these DESC structs don't need to be long-lived. This means, for example, that it's safe to place
-        // the DML_OPERATOR_DESC (and all the subobjects it points to) on the stack, since they're no longer needed after
-        // CreateOperator returns.
+		DML_CAST_OPERATOR_DESC reduceOperatorDesc{};
+		reduceOperatorDesc.InputTensor = &dmlTensorDesc;
+		reduceOperatorDesc.OutputTensor = &outputTensorDesc;
         DML_OPERATOR_DESC dmlOperatorDesc{};
-        dmlOperatorDesc.Type = DML_OPERATOR_REDUCE;
-        dmlOperatorDesc.Desc = &argmaxOperatorDesc;
+        dmlOperatorDesc.Type = DML_OPERATOR_CAST;
+        dmlOperatorDesc.Desc = &reduceOperatorDesc;
 
         check_hresult(dmlDevice->CreateOperator(
             &dmlOperatorDesc,
@@ -432,8 +425,6 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
             element = data++;
             std::wcout << element << L' ';
         };
-		inputTensorElementArray[2] = 8;
-		inputTensorElementArray[5] = 10;
         std::wcout << std::endl;
 
         D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
@@ -512,7 +503,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
     CloseExecuteResetWait(d3D12Device, commandQueue, commandAllocator, commandList);
 
     D3D12_RANGE tensorBufferRange{ 0, outputTensorBufferSize };
-    UINT32* outputBufferData{};
+    float* outputBufferData{};
     check_hresult(readbackBuffer->Map(0, &tensorBufferRange, reinterpret_cast<void**>(&outputBufferData)));
 
     std::wcout << L"output tensor: ";
