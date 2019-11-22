@@ -186,7 +186,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         __uuidof(dmlDevice),
         dmlDevice.put_void()));
 
-    constexpr UINT tensorSizes[4] = { 1, 16000, 1, 1};
+    constexpr UINT tensorSizes[4] = { 1, 48, 798, 1};
     constexpr UINT tensorElementCount = tensorSizes[0] * tensorSizes[1] * tensorSizes[2] * tensorSizes[3];
 
     DML_BUFFER_TENSOR_DESC dmlBufferTensorDesc = {};
@@ -201,7 +201,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         dmlBufferTensorDesc.Sizes,
         dmlBufferTensorDesc.Strides);
 
-	constexpr UINT outputTensor[4] = { 1, 20, 1, 800 };
+	constexpr UINT outputTensor[4] = { 1, 48, 398, 1 };
 	DML_BUFFER_TENSOR_DESC outputBufferTensorDesc = {};
 	outputBufferTensorDesc.DataType = DML_TENSOR_DATA_TYPE_FLOAT32;
 	outputBufferTensorDesc.Flags = DML_TENSOR_FLAG_NONE;
@@ -228,12 +228,17 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
 		outputTensorDesc.Type = DML_TENSOR_TYPE_BUFFER;
 		outputTensorDesc.Desc = &outputBufferTensorDesc;
 
-		DML_CAST_OPERATOR_DESC reduceOperatorDesc{};
-		reduceOperatorDesc.InputTensor = &dmlTensorDesc;
-		reduceOperatorDesc.OutputTensor = &outputTensorDesc;
+		const uint32_t strides[2] = { 1, 2 };
+		const uint32_t windows_size[2] = { 1, 3 };
+		const uint32_t start_padding[2] = { 0, 0 };
+		const uint32_t end_padding[2] = { 0, 0 };
+		DML_MAX_POOLING_OPERATOR_DESC maxPoolingOperatorDesc = {
+			&dmlTensorDesc, &outputTensorDesc, 2,          strides,
+			windows_size,       start_padding,       end_padding };
+
         DML_OPERATOR_DESC dmlOperatorDesc{};
-        dmlOperatorDesc.Type = DML_OPERATOR_CAST;
-        dmlOperatorDesc.Desc = &reduceOperatorDesc;
+        dmlOperatorDesc.Type = DML_OPERATOR_MAX_POOLING;
+        dmlOperatorDesc.Desc = &maxPoolingOperatorDesc;
 
         check_hresult(dmlDevice->CreateOperator(
             &dmlOperatorDesc,
@@ -423,7 +428,7 @@ int __cdecl wmain(int /*argc*/, char ** /*argv*/)
         for (auto & element : inputTensorElementArray)
         {
             element = data++;
-            std::wcout << element << L' ';
+            //std::wcout << element << L' ';
         };
         std::wcout << std::endl;
 
