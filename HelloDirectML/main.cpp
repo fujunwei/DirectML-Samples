@@ -10,8 +10,10 @@ using winrt::check_bool;
 using winrt::handle;
 
 #define USE_VPU 1
-
 bool g_support_f16 = 1;
+
+const uint16_t f16_val = 11879; // 0.10003662109375
+const FLOAT f32_val = 0.10003662109375;
 
 std::string DriverDescription(com_ptr<IDXCoreAdapter>& adapter, bool selected = false) {
 	// If the adapter is a software adapter then don't consider it for index selection
@@ -22,7 +24,7 @@ std::string DriverDescription(com_ptr<IDXCoreAdapter>& adapter, bool selected = 
 	check_hresult(adapter->GetProperty(DXCoreAdapterProperty::DriverDescription,
 		driverDescriptionSize, driverDescription));
 	if (selected) {
-		printf("Using adapter : %s\n", driverDescription);
+		printf("Use adapter : %s\n", driverDescription);
 	}
 
 	std::string driverDescriptionStr = std::string(driverDescription);
@@ -57,7 +59,6 @@ void InitWithDXCore(com_ptr<ID3D12Device>& d3D12Device,
 	com_ptr<IDXGIAdapter> dxgiAdapter;
 	D3D_FEATURE_LEVEL d3dFeatureLevel = D3D_FEATURE_LEVEL_1_0_CORE;
 	D3D12_COMMAND_LIST_TYPE commandQueueType = D3D12_COMMAND_LIST_TYPE_COMPUTE;
-	printf("Printing available adapters..\n");
 	for (UINT i = 0; i < adapterList->GetAdapterCount(); i++) {
 		currAdapter = nullptr;
 		check_hresult(adapterList->GetAdapter(i, currAdapter.put()));
@@ -87,7 +88,6 @@ void InitWithDXCore(com_ptr<ID3D12Device>& d3D12Device,
 		if (hr == S_OK) {
 			// If DXGI factory creation was successful then get the IDXGIAdapter from the LUID
 			// acquired from the selectedAdapter
-			std::cout << "Using DXGI for adapter creation.." << std::endl;
 			LUID adapterLuid;
 			check_hresult(currAdapter->GetProperty(DXCoreAdapterProperty::InstanceLuid, &adapterLuid));
 			check_hresult(dxgiFactory4->EnumAdapterByLuid(adapterLuid, __uuidof(IDXGIAdapter),
@@ -229,6 +229,8 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 	com_ptr<ID3D12CommandAllocator> commandAllocator;
 	com_ptr<ID3D12GraphicsCommandList> commandList;
 
+	std::wcout << "DML Conv2D Test" << std::endl;
+
 	// Set up Direct3D 12.
 	InitWithDXCore(d3D12Device, commandQueue, commandAllocator, commandList);
 
@@ -254,8 +256,14 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 	check_hresult(dmlDevice->CheckFeatureSupport(
 		DML_FEATURE_TENSOR_DATA_TYPE_SUPPORT, sizeof(fp16_query), &fp16_query,
 		sizeof(support_f16), &support_f16));
-	g_support_f16 = support_f16.IsSupported;
-	std::wcout << "Support float16 data type " << g_support_f16 << "\n";
+
+	std::wcout << "Request float16: " << g_support_f16 << std::endl;
+	std::wcout << "Support float16: " << support_f16.IsSupported << std::endl;
+
+	if (g_support_f16 && !support_f16.IsSupported) {
+		std::wcout << "Request float16 failed" << std::endl;
+		return -1;
+	}
 
 	// The command recorder is a stateless object that records Dispatches into an existing Direct3D 12 command list.
 	com_ptr<IDMLCommandRecorder> dmlCommandRecorder;
@@ -264,6 +272,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		dmlCommandRecorder.put_void()));
 
 	constexpr UINT inputSizes[4] = { 1, 512, 13, 13 };
+	std::wcout << "Input tensor shape: [" << inputSizes[0] << ", " << inputSizes[1] << ", " << inputSizes[2] << ", " << inputSizes[3] << "]" << std::endl;
 	constexpr UINT inputElementCount = inputSizes[0] * inputSizes[1] * inputSizes[2] * inputSizes[3];
 	DML_BUFFER_TENSOR_DESC inputTensorDesc = {};
 	inputTensorDesc.DataType = g_support_f16 ? DML_TENSOR_DATA_TYPE_FLOAT16
@@ -279,6 +288,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		inputTensorDesc.Strides);
 
 	constexpr UINT weightSizes[4] = { 1000, 512, 1, 1 };
+	std::wcout << "Weight tensor shape: [" << weightSizes[0] << ", " << weightSizes[1] << ", " << weightSizes[2] << ", " << weightSizes[3] << "]" << std::endl;
 	constexpr UINT weightElementCount = weightSizes[0] * weightSizes[1] * weightSizes[2] * weightSizes[3];
 	DML_BUFFER_TENSOR_DESC weightTensorDesc = {};
 	weightTensorDesc.DataType = g_support_f16 ? DML_TENSOR_DATA_TYPE_FLOAT16
@@ -294,6 +304,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		weightTensorDesc.Strides);
 
 	constexpr UINT outputSizes[4] = { 1, 1000, 13, 13 };
+	std::wcout << "Output tensor shape: [" << outputSizes[0] << ", " << outputSizes[1] << ", " << outputSizes[2] << ", " << outputSizes[3] << "]" << std::endl;
 	constexpr UINT outputElementCount = outputSizes[0] * outputSizes[1] * outputSizes[2] * outputSizes[3];
 	DML_BUFFER_TENSOR_DESC outputTensorDesc = {};
 	outputTensorDesc.DataType = g_support_f16 ? DML_TENSOR_DATA_TYPE_FLOAT16
@@ -447,10 +458,12 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		weightBuffer.put_void()));
 
 	// std::wcout << std::fixed; std::wcout.precision(2);
-	std::vector<uint16_t> weightElementArray(weightElementCount, 1);
+	std::vector<uint16_t> weightElementArray(weightElementCount, f16_val);
+	std::vector<FLOAT> weightElementArrayF32(weightElementCount, f32_val);
+	void* weightData = g_support_f16 ? (void*)weightElementArray.data() : (void*)weightElementArrayF32.data();
 	{
 		D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
-		tensorSubresourceData.pData = weightElementArray.data();
+		tensorSubresourceData.pData = weightData;
 		tensorSubresourceData.RowPitch = weightBufferSize;
 		tensorSubresourceData.SlicePitch = tensorSubresourceData.RowPitch;
 
@@ -589,10 +602,12 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		inputBuffer.put_void()));
 
 	// std::wcout << std::fixed; std::wcout.precision(2);
-	std::vector<uint16_t> inputTensorElementArray(inputElementCount, 1);
+	std::vector<uint16_t> inputTensorElementArray(inputElementCount, f16_val);
+	std::vector<FLOAT> inputTensorElementArrayF32(inputElementCount, f32_val);
+	void* inputData = g_support_f16 ? (void*)inputTensorElementArray.data() : (void*)inputTensorElementArrayF32.data();
 	{
 		D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
-		tensorSubresourceData.pData = inputTensorElementArray.data();
+		tensorSubresourceData.pData = inputData;
 		tensorSubresourceData.RowPitch = inputBufferSize;
 		tensorSubresourceData.SlicePitch = tensorSubresourceData.RowPitch;
 
@@ -652,7 +667,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 
 	SYSTEMTIME sys_2;
 	GetLocalTime(&sys_2);
-	std::wcout << L"predict time: " << sys_2.wMilliseconds - sys_1.wMilliseconds << " ms\n";
+	std::wcout << L"Predict time: " << sys_2.wMilliseconds - sys_1.wMilliseconds << " ms\n";
 
 	// The output buffer now contains the result of the identity operator,
 	// so read it back if you want the CPU to access it.
@@ -681,8 +696,25 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 	CloseExecuteResetWait(d3D12Device, commandQueue, commandAllocator, commandList);
 
 	D3D12_RANGE tensorBufferRange{ 0, outputBufferSize };
-	FLOAT* outputBufferData{};
+	CHAR* outputBufferData{};
 	check_hresult(readbackBuffer->Map(0, &tensorBufferRange, reinterpret_cast<void**>(&outputBufferData)));
+
+	std::wcout << L"Output tensor elements[0-10]: ";
+	for (size_t tensorElementIndex{ 0 }; tensorElementIndex < 10; ++tensorElementIndex)
+	{
+		if (g_support_f16) {
+			uint16_t* value = (uint16_t*)outputBufferData;
+			std::wcout << *value << L' ';
+			outputBufferData += sizeof(uint16_t);
+		}
+		else {
+			FLOAT* value = (FLOAT*)outputBufferData;
+			std::wcout << *value << L' ';
+			outputBufferData += sizeof(FLOAT);
+		}
+		
+	}
+	std::wcout << std::endl;
 
 	D3D12_RANGE emptyRange{ 0, 0 };
 	readbackBuffer->Unmap(0, &emptyRange);
