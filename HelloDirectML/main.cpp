@@ -303,6 +303,22 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		weightTensorDesc.Sizes,
 		weightTensorDesc.Strides);
 
+	constexpr UINT biasSizes[4] = { 1, 1000, 1, 1 };
+	std::wcout << "Bias tensor shape: [" << biasSizes[0] << ", " << biasSizes[1] << ", " << biasSizes[2] << ", " << biasSizes[3] << "]" << std::endl;
+	constexpr UINT biasElementCount = biasSizes[0] * biasSizes[1] * biasSizes[2] * biasSizes[3];
+	DML_BUFFER_TENSOR_DESC biasTensorDesc = {};
+	biasTensorDesc.DataType = g_support_f16 ? DML_TENSOR_DATA_TYPE_FLOAT16
+		: DML_TENSOR_DATA_TYPE_FLOAT32;
+	biasTensorDesc.Flags = DML_TENSOR_FLAG_OWNED_BY_DML;
+	biasTensorDesc.DimensionCount = ARRAYSIZE(biasSizes);
+	biasTensorDesc.Sizes = biasSizes;
+	biasTensorDesc.Strides = nullptr;
+	biasTensorDesc.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
+		biasTensorDesc.DataType,
+		biasTensorDesc.DimensionCount,
+		biasTensorDesc.Sizes,
+		biasTensorDesc.Strides);
+
 	constexpr UINT outputSizes[4] = { 1, 1000, 13, 13 };
 	std::wcout << "Output tensor shape: [" << outputSizes[0] << ", " << outputSizes[1] << ", " << outputSizes[2] << ", " << outputSizes[3] << "]" << std::endl;
 	constexpr UINT outputElementCount = outputSizes[0] * outputSizes[1] * outputSizes[2] * outputSizes[3];
@@ -329,6 +345,9 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		DML_TENSOR_DESC weights_tensor_desc = { DML_TENSOR_TYPE_BUFFER,
 											   &weightTensorDesc };
 
+		DML_TENSOR_DESC bias_tensor_desc = { DML_TENSOR_TYPE_BUFFER,
+											   & biasTensorDesc };
+
 		DML_TENSOR_DESC output_tensor_desc = { DML_TENSOR_TYPE_BUFFER,
 											  &outputTensorDesc };
 
@@ -341,7 +360,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 		DML_CONVOLUTION_OPERATOR_DESC conv_operator_desc = {
 			&input_tensor_desc,
 			&weights_tensor_desc,
-			nullptr,
+			&bias_tensor_desc,
 			&output_tensor_desc,
 			DML_CONVOLUTION_MODE_CROSS_CORRELATION,
 			DML_CONVOLUTION_DIRECTION_FORWARD,
@@ -486,12 +505,64 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 			)
 		);
 	}
+
+	// bias.
+	UINT64 biasBufferSize{ biasTensorDesc.TotalTensorSizeInBytes };
+	com_ptr<ID3D12Resource> biasUploadBuffer;
+	check_hresult(d3D12Device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(biasBufferSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		__uuidof(biasUploadBuffer),
+		biasUploadBuffer.put_void()));
+
+	com_ptr<ID3D12Resource> biasBuffer;
+	check_hresult(d3D12Device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(biasBufferSize, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		nullptr,
+		__uuidof(biasBuffer),
+		biasBuffer.put_void()));
+
+	std::vector<uint16_t> biasElementArray(biasElementCount, f16_val);
+	std::vector<FLOAT> biasElementArrayF32(biasElementCount, f32_val);
+	void* biasData = g_support_f16 ? (void*)biasElementArray.data() : (void*)biasElementArrayF32.data();
+	{
+		D3D12_SUBRESOURCE_DATA tensorSubresourceData{};
+		tensorSubresourceData.pData = biasData;
+		tensorSubresourceData.RowPitch = biasBufferSize;
+		tensorSubresourceData.SlicePitch = tensorSubresourceData.RowPitch;
+
+		// Upload the input tensor to the GPU.
+		::UpdateSubresources(
+			commandList.get(),
+			biasBuffer.get(),
+			biasUploadBuffer.get(),
+			0,
+			0,
+			1,
+			&tensorSubresourceData);
+
+		commandList->ResourceBarrier(
+			1,
+			&CD3DX12_RESOURCE_BARRIER::Transition(
+				biasBuffer.get(),
+				D3D12_RESOURCE_STATE_COPY_DEST,
+				D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+			)
+		);
+	}
+
 	DML_BUFFER_BINDING* input_buffers = new DML_BUFFER_BINDING[3];
 	// Empty buffer binding.
 	input_buffers[0] = { nullptr, 0, 0 };
 	input_buffers[1] = { weightBuffer.get(), 0,
 						  weightBufferSize };
-	input_buffers[2] = { nullptr, 0, 0 };
+	input_buffers[2] = { biasBuffer.get(), 0, biasBufferSize };
 
 	DML_BUFFER_ARRAY_BINDING init_buffer_array[1];
 	DML_BINDING_DESC init_binding_array[1];
@@ -636,7 +707,7 @@ int __cdecl wmain(int /*argc*/, char** /*argv*/)
 	DML_BUFFER_BINDING inputBufferBinding[3];
 	inputBufferBinding[0] = { inputBuffer.get(), 0, inputBufferSize };
 	inputBufferBinding[1] = { weightBuffer.get(), 0, weightBufferSize };
-	inputBufferBinding[2] = { nullptr, 0, 0 };
+	inputBufferBinding[2] = { biasBuffer.get(), 0, biasBufferSize };
 	DML_BINDING_DESC inputBindingDesc[3];
 	inputBindingDesc[0] = { DML_BINDING_TYPE_BUFFER, &inputBufferBinding[0] };
 	inputBindingDesc[1] = { DML_BINDING_TYPE_NONE, nullptr };
